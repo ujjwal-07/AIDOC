@@ -21,8 +21,9 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { pdfjsLib } from '../../utils/pdfWorkerSetup';
+import { pdfjsLib, PDFJS_DEFAULT_CONFIG } from '../../utils/pdfWorkerSetup';
 import { createSamplePdf } from '../../utils/pdfToWord';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import jsPDF from 'jspdf';
 
 interface TextOverlayItem {
@@ -173,7 +174,65 @@ function parsePdfFont(
 }
 
 /**
- * Samples exact text color and surrounding background color from rendered canvas
+ * Converts a hex or rgb/rgba string into normalized RGB {r, g, b} (0 to 1) for pdf-lib
+ */
+function parseColorToRgb(colorStr: string): { r: number; g: number; b: number } {
+  if (!colorStr) return { r: 0, g: 0, b: 0 };
+  const trimmed = colorStr.trim();
+  if (trimmed.startsWith('#')) {
+    let hex = trimmed.slice(1);
+    if (hex.length === 3) {
+      hex = hex.split('').map((c) => c + c).join('');
+    }
+    const num = parseInt(hex, 16);
+    return {
+      r: ((num >> 16) & 255) / 255,
+      g: ((num >> 8) & 255) / 255,
+      b: (num & 255) / 255,
+    };
+  }
+  const match = trimmed.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (match) {
+    return {
+      r: parseInt(match[1], 10) / 255,
+      g: parseInt(match[2], 10) / 255,
+      b: parseInt(match[3], 10) / 255,
+    };
+  }
+  return { r: 0, g: 0, b: 0 };
+}
+
+/**
+ * Maps font family and styling to standard PDF-lib fonts
+ */
+async function getPdfLibFont(
+  pdfDoc: PDFDocument,
+  fontFamily: string,
+  isBold: boolean,
+  isItalic: boolean
+) {
+  const f = (fontFamily || '').toLowerCase();
+  if (f.includes('times') || f.includes('georgia') || f.includes('cambria') || (f.includes('serif') && !f.includes('sans'))) {
+    if (isBold && isItalic) return pdfDoc.embedStandardFont(StandardFonts.TimesRomanBoldItalic);
+    if (isBold) return pdfDoc.embedStandardFont(StandardFonts.TimesRomanBold);
+    if (isItalic) return pdfDoc.embedStandardFont(StandardFonts.TimesRomanItalic);
+    return pdfDoc.embedStandardFont(StandardFonts.TimesRoman);
+  }
+  if (f.includes('courier') || f.includes('mono') || f.includes('consolas')) {
+    if (isBold && isItalic) return pdfDoc.embedStandardFont(StandardFonts.CourierBoldOblique);
+    if (isBold) return pdfDoc.embedStandardFont(StandardFonts.CourierBold);
+    if (isItalic) return pdfDoc.embedStandardFont(StandardFonts.CourierOblique);
+    return pdfDoc.embedStandardFont(StandardFonts.Courier);
+  }
+  // Default: Helvetica (standard Sans-Serif)
+  if (isBold && isItalic) return pdfDoc.embedStandardFont(StandardFonts.HelveticaBoldOblique);
+  if (isBold) return pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+  if (isItalic) return pdfDoc.embedStandardFont(StandardFonts.HelveticaOblique);
+  return pdfDoc.embedStandardFont(StandardFonts.Helvetica);
+}
+
+/**
+ * Samples exact text color and surrounding background color from rendered canvas with multi-point averaging
  */
 function sampleTextAndBgColor(
   canvas: HTMLCanvasElement,
@@ -192,36 +251,74 @@ function sampleTextAndBgColor(
     const clampedH = Math.max(1, Math.min(Math.floor(height), canvas.height - clampedY));
 
     const imgData = ctx.getImageData(clampedX, clampedY, clampedW, clampedH).data;
+    if (imgData.length < 4) return { textColor: '#0f172a', bgColor: '#ffffff' };
 
-    // Sample background from corner pixels
-    const bgR = imgData[0];
-    const bgG = imgData[1];
-    const bgB = imgData[2];
-    const bgColor = `rgb(${bgR}, ${bgG}, ${bgB})`;
+    // Sample background from 4 outer corners of the text item bounding box
+    const cornerOffsets = [
+      0, // top-left
+      Math.max(0, clampedW - 1) * 4, // top-right
+      Math.max(0, (clampedH - 1) * clampedW) * 4, // bottom-left
+      Math.max(0, (clampedH - 1) * clampedW + (clampedW - 1)) * 4, // bottom-right
+    ];
 
-    // Find darkest pixel for text color (highest contrast)
+    let sumR = 0, sumG = 0, sumB = 0, count = 0;
+    for (const offset of cornerOffsets) {
+      if (offset >= 0 && offset + 2 < imgData.length) {
+        sumR += imgData[offset];
+        sumG += imgData[offset + 1];
+        sumB += imgData[offset + 2];
+        count++;
+      }
+    }
+
+    const bgR = count > 0 ? Math.round(sumR / count) : 255;
+    const bgG = count > 0 ? Math.round(sumG / count) : 255;
+    const bgB = count > 0 ? Math.round(sumB / count) : 255;
+    const avgBrightness = (bgR + bgG + bgB) / 3;
+
+    // If corners are white or very near white (>= 238), snap cleanly to '#ffffff' to prevent visible grayish patches
+    const bgColor = (bgR >= 238 && bgG >= 238 && bgB >= 238) || avgBrightness > 240
+      ? '#ffffff'
+      : `rgb(${bgR}, ${bgG}, ${bgB})`;
+
+    // Find darkest pixel inside the central 70% region for text color
     let minBrightness = 765;
-    let textR = 30, textG = 41, textB = 59;
+    let textR = 15, textG = 23, textB = 42;
 
-    for (let i = 0; i < imgData.length; i += 4) {
-      const r = imgData[i];
-      const g = imgData[i + 1];
-      const b = imgData[i + 2];
-      const a = imgData[i + 3];
-      if (a > 120) {
-        const brightness = r + g + b;
-        if (brightness < minBrightness) {
-          minBrightness = brightness;
-          textR = r;
-          textG = g;
-          textB = b;
+    const startRow = Math.floor(clampedH * 0.15);
+    const endRow = Math.ceil(clampedH * 0.85);
+    const startCol = Math.floor(clampedW * 0.15);
+    const endCol = Math.ceil(clampedW * 0.85);
+
+    for (let r = startRow; r < endRow; r++) {
+      for (let c = startCol; c < endCol; c++) {
+        const idx = (r * clampedW + c) * 4;
+        if (idx + 3 < imgData.length) {
+          const red = imgData[idx];
+          const green = imgData[idx + 1];
+          const blue = imgData[idx + 2];
+          const alpha = imgData[idx + 3];
+          if (alpha > 128) {
+            const brightness = red + green + blue;
+            if (brightness < minBrightness) {
+              minBrightness = brightness;
+              textR = red;
+              textG = green;
+              textB = blue;
+            }
+          }
         }
       }
     }
 
+    // Default to dark slate if no distinct dark text was found
+    if (minBrightness > 700) {
+      textR = 15; textG = 23; textB = 42;
+    }
+
     return {
       textColor: `rgb(${textR}, ${textG}, ${textB})`,
-      bgColor: minBrightness > 650 ? '#ffffff' : bgColor,
+      bgColor,
     };
   } catch {
     return { textColor: '#0f172a', bgColor: '#ffffff' };
@@ -316,6 +413,9 @@ export const PdfEditor: React.FC = () => {
   const [isNewTextModal, setIsNewTextModal] = useState(false);
   const [newTextCoords, setNewTextCoords] = useState({ x: 50, y: 50 });
 
+  const [originalPdfBytes, setOriginalPdfBytes] = useState<Uint8Array | null>(null);
+  const activeRenderTaskRef = useRef<any>(null);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -331,7 +431,11 @@ export const PdfEditor: React.FC = () => {
     try {
       const buffer = await file.arrayBuffer();
       const rawBytes = new Uint8Array(buffer);
-      const loadingTask = pdfjsLib.getDocument({ data: rawBytes });
+      setOriginalPdfBytes(rawBytes);
+      const loadingTask = pdfjsLib.getDocument({
+        data: rawBytes.slice(),
+        ...PDFJS_DEFAULT_CONFIG,
+      });
       const doc = await loadingTask.promise;
       setPdfDoc(doc);
       setTotalPages(doc.numPages);
@@ -364,24 +468,59 @@ export const PdfEditor: React.FC = () => {
     let isCancelled = false;
 
     const renderPage = async () => {
+      // 1. Cancel previous in-flight render task if one is already running to prevent ghosting/tiling
+      if (activeRenderTaskRef.current) {
+        try {
+          activeRenderTaskRef.current.cancel();
+        } catch {
+          // Ignore cancellation errors
+        }
+        activeRenderTaskRef.current = null;
+      }
+
       try {
         const page = await pdfDoc.getPage(currentPage);
+        if (isCancelled) return;
+
+        const dpr = Math.max(window.devicePixelRatio || 1, 2);
         const viewport = page.getViewport({ scale: zoomScale });
 
         const canvas = canvasRef.current;
         const overlayCanvas = overlayCanvasRef.current;
         if (!canvas || !overlayCanvas) return;
 
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        overlayCanvas.width = viewport.width;
-        overlayCanvas.height = viewport.height;
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
+
+        overlayCanvas.width = Math.floor(viewport.width * dpr);
+        overlayCanvas.height = Math.floor(viewport.height * dpr);
+        overlayCanvas.style.width = `${Math.floor(viewport.width)}px`;
+        overlayCanvas.style.height = `${Math.floor(viewport.height)}px`;
 
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // Render base PDF page with 100% visual fidelity
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        // Clear canvas and reset transform matrix before drawing
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Standard PDF.js High-DPI transform matrix:
+        // Keeps PDF layout, Form XObjects, and Soft Masks (SMask) aligned with the viewport (scale: zoomScale)
+        // so transparent header badges, shadows, and logos never duplicate or tile!
+        const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined;
+
+        const renderTask = page.render({
+          canvasContext: ctx,
+          viewport,
+          transform: transform || null,
+        });
+        activeRenderTaskRef.current = renderTask;
+        await renderTask.promise;
+        activeRenderTaskRef.current = null;
+
+        if (isCancelled) return;
 
         // Extract text items with exact styles and font information
         const textContent = await page.getTextContent();
@@ -405,8 +544,8 @@ export const PdfEditor: React.FC = () => {
           const fontStyleObj = styles[item.fontName] || {};
           const parsed = parsePdfFont(item.fontName, fontStyleObj.fontFamily);
 
-          // Sample exact pixel color from the base canvas
-          const sampledColors = sampleTextAndBgColor(canvas, x, y, width, height);
+          // Sample exact pixel color from the base canvas using DPR-scaled coordinates!
+          const sampledColors = sampleTextAndBgColor(canvas, x * dpr, y * dpr, width * dpr, height * dpr);
 
           detected.push({
             id: `text-item-${currentPage}-${index++}`,
@@ -425,10 +564,15 @@ export const PdfEditor: React.FC = () => {
           });
         }
 
+        if (isCancelled) return;
         setRawPageTextItems(detected);
         const merged = groupAndMergeTextItems(detected, textGranularity);
         setPageTextItems(merged);
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.name === 'RenderingCancelledException') {
+          // Expected cancellation when switching page or zoom level rapidly
+          return;
+        }
         console.error('Page render error:', err);
       }
     };
@@ -437,6 +581,14 @@ export const PdfEditor: React.FC = () => {
 
     return () => {
       isCancelled = true;
+      if (activeRenderTaskRef.current) {
+        try {
+          activeRenderTaskRef.current.cancel();
+        } catch {
+          // Ignore
+        }
+        activeRenderTaskRef.current = null;
+      }
     };
   }, [pdfDoc, currentPage, zoomScale]);
 
@@ -457,7 +609,10 @@ export const PdfEditor: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const dpr = Math.max(window.devicePixelRatio || 1, 2);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // 1. Draw subtle interactive bounding boxes over all detected text on the PDF
     if (showTextBoundingBoxes && (activeTool === 'editText' || activeTool === 'select')) {
@@ -525,6 +680,7 @@ export const PdfEditor: React.FC = () => {
         }
       }
     }
+    ctx.restore();
   }, [overlays, currentPage, selectedOverlayId, activeTool, pageTextItems, hoveredTextId, showTextBoundingBoxes]);
 
   // Open edit modal for an existing detected text item with auto-matched font & color
@@ -698,11 +854,11 @@ export const PdfEditor: React.FC = () => {
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const cssWidth = parseFloat(canvas.style.width) || canvas.width;
+    const cssHeight = parseFloat(canvas.style.height) || canvas.height;
 
-    const clickX = (e.clientX - rect.left) * scaleX;
-    const clickY = (e.clientY - rect.top) * scaleY;
+    const clickX = ((e.clientX - rect.left) / rect.width) * cssWidth;
+    const clickY = ((e.clientY - rect.top) / rect.height) * cssHeight;
 
     if (activeTool === 'editText') {
       // 1. Check if user clicked an existing overlay to re-edit
@@ -801,11 +957,11 @@ export const PdfEditor: React.FC = () => {
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const cssWidth = parseFloat(canvas.style.width) || canvas.width;
+    const cssHeight = parseFloat(canvas.style.height) || canvas.height;
 
-    const mouseX = (e.clientX - rect.left) * scaleX;
-    const mouseY = (e.clientY - rect.top) * scaleY;
+    const mouseX = ((e.clientX - rect.left) / rect.width) * cssWidth;
+    const mouseY = ((e.clientY - rect.top) / rect.height) * cssHeight;
 
     if (activeTool === 'editText') {
       const hovered = pageTextItems.find(
@@ -840,11 +996,11 @@ export const PdfEditor: React.FC = () => {
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const cssWidth = parseFloat(canvas.style.width) || canvas.width;
+    const cssHeight = parseFloat(canvas.style.height) || canvas.height;
 
-    const mouseX = (e.clientX - rect.left) * scaleX;
-    const mouseY = (e.clientY - rect.top) * scaleY;
+    const mouseX = ((e.clientX - rect.left) / rect.width) * cssWidth;
+    const mouseY = ((e.clientY - rect.top) / rect.height) * cssHeight;
 
     const selected = overlays.find((o) => o.id === selectedOverlayId);
     if (
@@ -863,66 +1019,185 @@ export const PdfEditor: React.FC = () => {
     setIsDragging(false);
   };
 
-  // Export modified PDF preserving 100% of the original design and graphics
+  // Export modified PDF preserving 100% original vector elements, header banners, logos and quality
   const handleExportPdf = async () => {
-    if (!pdfDoc || !canvasRef.current || !overlayCanvasRef.current) return;
+    if (!pdfDoc) return;
 
     try {
-      const mergedCanvas = document.createElement('canvas');
-      mergedCanvas.width = canvasRef.current.width;
-      mergedCanvas.height = canvasRef.current.height;
-      const mctx = mergedCanvas.getContext('2d');
-      if (!mctx) return;
+      // 1. PRIMARY VECTOR-PRESERVING EXPORT VIA PDF-LIB
+      // Modifies the original PDF directly: 100% vector fonts, header images & banners stay untouched!
+      if (originalPdfBytes) {
+        try {
+          const pdfLibDoc = await PDFDocument.load(originalPdfBytes.slice());
+          const totalPdfPages = pdfLibDoc.getPageCount();
 
-      // Draw base PDF with original layout and styling
-      mctx.drawImage(canvasRef.current, 0, 0);
+          for (let pNum = 1; pNum <= totalPdfPages; pNum++) {
+            const pageOverlays = overlays.filter((item) => item.page === pNum);
+            if (pageOverlays.length === 0) continue;
 
-      // Draw overlays with precise non-overlapping layout
+            const pdfPage = pdfLibDoc.getPage(pNum - 1);
+            const { width: pWidth, height: pHeight } = pdfPage.getSize();
+            const pageObj = await pdfDoc.getPage(pNum);
+            const pageVp = pageObj.getViewport({ scale: zoomScale });
+            const sX = pWidth / pageVp.width;
+            const sY = pHeight / pageVp.height;
+
+            for (const item of pageOverlays) {
+              const itemW = item.width * sX;
+              const itemH = item.height * sY;
+              const itemX = item.x * sX;
+              // In PDF-lib: origin (0, 0) is at bottom-left, y increases upward
+              const itemY = pHeight - ((item.y + item.height) * sY);
+
+              if (item.isRedaction) {
+                const bgRgb = parseColorToRgb(item.backgroundColor || '#ffffff');
+                pdfPage.drawRectangle({
+                  x: itemX,
+                  y: itemY,
+                  width: itemW,
+                  height: itemH,
+                  color: rgb(bgRgb.r, bgRgb.g, bgRgb.b),
+                });
+              } else if (item.isHighlight) {
+                const hlRgb = parseColorToRgb(item.backgroundColor || '#fde047');
+                pdfPage.drawRectangle({
+                  x: itemX,
+                  y: itemY,
+                  width: itemW,
+                  height: itemH,
+                  color: rgb(hlRgb.r, hlRgb.g, hlRgb.b),
+                  opacity: 0.45,
+                });
+              } else {
+                // Background mask over original text slot
+                if (item.backgroundColor) {
+                  const bgRgb = parseColorToRgb(item.backgroundColor);
+                  const extraRight = (item.extraRightPad || 0) * sX;
+                  const maskW = itemW + extraRight;
+                  pdfPage.drawRectangle({
+                    x: Math.max(0, itemX - 2 * sX),
+                    y: Math.max(0, itemY - 1 * sY),
+                    width: maskW + 4 * sX,
+                    height: itemH + 2 * sY,
+                    color: rgb(bgRgb.r, bgRgb.g, bgRgb.b),
+                  });
+                }
+
+                // Replacement text with matching standard font
+                const font = await getPdfLibFont(pdfLibDoc, item.fontFamily, item.isBold, item.isItalic);
+                const textRgb = parseColorToRgb(item.color || '#0f172a');
+                const fontSizeInPts = item.fontSize * sY;
+                const yOffsetPts = (item.yOffset || 0) * sY;
+
+                // PDF font baseline is approx bottom Y + 18% of line height
+                const baselineY = itemY + (itemH * 0.18) - yOffsetPts;
+
+                pdfPage.drawText(item.text, {
+                  x: itemX,
+                  y: baselineY,
+                  size: Math.max(6, fontSizeInPts),
+                  font,
+                  color: rgb(textRgb.r, textRgb.g, textRgb.b),
+                });
+              }
+            }
+          }
+
+          const savedPdfBytes = await pdfLibDoc.save();
+          const blob = new Blob([savedPdfBytes as any], { type: 'application/pdf' });
+          const downloadUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = downloadUrl;
+          a.download = `Edited_${pdfFile?.name || 'Document.pdf'}`;
+          a.click();
+          URL.revokeObjectURL(downloadUrl);
+
+          confetti({
+            particleCount: 100,
+            spread: 70,
+            origin: { y: 0.6 },
+          });
+          return;
+        } catch (pdfLibErr) {
+          console.warn('In-place PDF vector modification error, falling back to clean high-DPI export:', pdfLibErr);
+        }
+      }
+
+      // 2. SECONDARY FALLBACK: High-resolution clean canvas export
+      const page = await pdfDoc.getPage(currentPage);
+      const exportScale = 2.5;
+      const exportViewport = page.getViewport({ scale: 1 });
+      const scaleMultiplier = exportScale / zoomScale;
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = Math.floor(exportViewport.width * exportScale);
+      exportCanvas.height = Math.floor(exportViewport.height * exportScale);
+      const ectx = exportCanvas.getContext('2d');
+      if (!ectx) return;
+
+      ectx.setTransform(1, 0, 0, 1, 0, 0);
+      ectx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+      const exportTransform = [exportScale, 0, 0, exportScale, 0, 0];
+      await page.render({
+        canvas: exportCanvas,
+        canvasContext: ectx,
+        viewport: exportViewport,
+        transform: exportTransform,
+      }).promise;
+
       const pageOverlays = overlays.filter((item) => item.page === currentPage);
       for (const item of pageOverlays) {
+        const ex = item.x * scaleMultiplier;
+        const ey = item.y * scaleMultiplier;
+        const ew = item.width * scaleMultiplier;
+        const eh = item.height * scaleMultiplier;
+        const efSize = item.fontSize * scaleMultiplier;
+        const eOrigWidth = item.originalWidth * scaleMultiplier;
+
         if (item.isRedaction) {
-          mctx.fillStyle = item.backgroundColor || '#ffffff';
-          mctx.fillRect(item.x, item.y, item.width, item.height);
+          ectx.fillStyle = item.backgroundColor || '#ffffff';
+          ectx.fillRect(ex, ey, ew, eh);
         } else if (item.isHighlight) {
-          mctx.fillStyle = item.backgroundColor || 'rgba(253, 224, 71, 0.45)';
-          mctx.fillRect(item.x, item.y, item.width, item.height);
+          ectx.fillStyle = item.backgroundColor || 'rgba(253, 224, 71, 0.45)';
+          ectx.fillRect(ex, ey, ew, eh);
         } else {
           const layout = computeTextLayout(
             item.text,
-            item.fontSize,
+            efSize,
             item.fontFamily,
             item.isBold,
             item.isItalic,
-            item.originalWidth,
+            eOrigWidth,
             item.autoFit
           );
 
           if (item.backgroundColor) {
-            mctx.fillStyle = item.backgroundColor;
-            const extraRight = item.extraRightPad || 0;
+            ectx.fillStyle = item.backgroundColor;
+            const extraRight = (item.extraRightPad || 0) * scaleMultiplier;
             const maskWidth =
               (item.autoFit
-                ? Math.max(item.originalWidth, layout.measuredWidth)
-                : Math.max(item.width, layout.measuredWidth)) + extraRight;
-            mctx.fillRect(item.x - 2, item.y - 1, maskWidth + 4, item.height + 2);
+                ? Math.max(eOrigWidth, layout.measuredWidth)
+                : Math.max(ew, layout.measuredWidth)) + extraRight;
+            ectx.fillRect(ex - 2, ey - 1, maskWidth + 4, eh + 2);
           }
 
-          mctx.fillStyle = item.color;
+          ectx.fillStyle = item.color;
           const fontStyle = `${item.isItalic ? 'italic ' : ''}${item.isBold ? 'bold ' : ''}${layout.fittedFontSize}px ${item.fontFamily}`;
-          mctx.font = fontStyle;
-          mctx.textBaseline = 'top';
-          mctx.fillText(item.text, item.x, item.y + (item.yOffset || 0));
+          ectx.font = fontStyle;
+          ectx.textBaseline = 'top';
+          ectx.fillText(item.text, ex, ey + ((item.yOffset || 0) * scaleMultiplier));
         }
       }
 
-      const imgData = mergedCanvas.toDataURL('image/jpeg', 0.95);
+      const imgData = exportCanvas.toDataURL('image/png');
       const pdf = new jsPDF({
-        orientation: mergedCanvas.width > mergedCanvas.height ? 'landscape' : 'portrait',
-        unit: 'px',
-        format: [mergedCanvas.width, mergedCanvas.height],
+        orientation: exportCanvas.width > exportCanvas.height ? 'landscape' : 'portrait',
+        unit: 'pt',
+        format: [page.view[2], page.view[3]],
       });
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, mergedCanvas.width, mergedCanvas.height);
+      pdf.addImage(imgData, 'PNG', 0, 0, page.view[2], page.view[3], undefined, 'FAST');
       const blob = pdf.output('blob');
 
       const downloadUrl = URL.createObjectURL(blob);
@@ -930,6 +1205,7 @@ export const PdfEditor: React.FC = () => {
       a.href = downloadUrl;
       a.download = `Edited_${pdfFile?.name || 'Document.pdf'}`;
       a.click();
+      URL.revokeObjectURL(downloadUrl);
 
       confetti({
         particleCount: 100,
@@ -938,7 +1214,7 @@ export const PdfEditor: React.FC = () => {
       });
     } catch (err) {
       console.error('Failed to export edited PDF:', err);
-      alert('Error generating PDF.');
+      alert('Failed to export edited PDF.');
     }
   };
 

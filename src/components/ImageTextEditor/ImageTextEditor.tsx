@@ -897,14 +897,14 @@ export const ImageTextEditor: React.FC = () => {
       }
     }
 
-    const imgData = exportCanvas.toDataURL('image/jpeg', 0.95);
+    const imgData = exportCanvas.toDataURL('image/png');
     const pdf = new jsPDF({
       orientation: exportCanvas.width > exportCanvas.height ? 'landscape' : 'portrait',
       unit: 'px',
       format: [exportCanvas.width, exportCanvas.height],
     });
 
-    pdf.addImage(imgData, 'JPEG', 0, 0, exportCanvas.width, exportCanvas.height);
+    pdf.addImage(imgData, 'PNG', 0, 0, exportCanvas.width, exportCanvas.height, undefined, 'FAST');
     const blob = pdf.output('blob');
 
     const downloadUrl = URL.createObjectURL(blob);

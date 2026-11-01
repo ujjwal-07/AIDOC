@@ -37,12 +37,13 @@ export async function exportHtmlToPdf(
 ): Promise<Blob> {
   const { pageSize = 'a4', orientation = 'portrait', margins = 12 } = options;
 
-  // High DPI rendering of the document preview
+  // High DPI rendering of the document preview (3x resolution for 300 DPI print clarity)
   const canvas = await html2canvas(element, {
-    scale: 2,
+    scale: 3,
     useCORS: true,
     logging: false,
     backgroundColor: '#ffffff',
+    windowWidth: 1200,
   });
 
   const pdf = new jsPDF({
@@ -59,7 +60,7 @@ export async function exportHtmlToPdf(
   const pageContentHeight = pdfHeight - margins * 2;
   const totalPages = Math.ceil(printHeight / pageContentHeight);
 
-  // Split canvas into multi-page PDF slices cleanly
+  // Split canvas into multi-page PDF slices cleanly without lossy JPEG compression
   for (let i = 0; i < totalPages; i++) {
     if (i > 0) {
       pdf.addPage();
@@ -88,8 +89,9 @@ export async function exportHtmlToPdf(
       );
     }
 
-    const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
-    pdf.addImage(imgData, 'JPEG', margins, margins, printWidth, pageContentHeight);
+    // Lossless PNG preserves sharp vector-like typography and crisp text lines
+    const imgData = sliceCanvas.toDataURL('image/png');
+    pdf.addImage(imgData, 'PNG', margins, margins, printWidth, pageContentHeight, undefined, 'FAST');
   }
 
   return pdf.output('blob');

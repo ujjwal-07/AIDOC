@@ -482,6 +482,7 @@ export const WordPdfConverter: React.FC = () => {
                         .docx-content th { background-color: #f1f5f9; font-weight: 700; color: #0f172a; }
                         .docx-content ul, .docx-content ol { padding-left: 24px; margin-bottom: 14px; color: #334155; }
                         .docx-content li { margin-bottom: 6px; word-break: break-word; }
+                        .docx-content img { max-width: 100%; height: auto; object-fit: contain; display: block; margin: 12px auto; background-repeat: no-repeat !important; }
                         .docx-content pre, .docx-content code { white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; font-family: 'JetBrains Mono', monospace; font-size: 13px; background: #f8fafc; padding: 2px 5px; border-radius: 4px; }
                       </style>
                       <div class="docx-content">${wordHtml}</div>

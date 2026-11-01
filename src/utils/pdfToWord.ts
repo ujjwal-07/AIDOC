@@ -1,4 +1,4 @@
-import { pdfjsLib } from './pdfWorkerSetup';
+import { pdfjsLib, PDFJS_DEFAULT_CONFIG } from './pdfWorkerSetup';
 import { Document, Paragraph, TextRun, HeadingLevel, PageBreak, Packer } from 'docx';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
@@ -48,7 +48,10 @@ export async function convertPdfToWord(
   onProgress?: (progress: number, status: string) => void
 ): Promise<PdfToWordResult> {
   onProgress?.(10, 'Initializing PDF parser engine...');
-  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) });
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    ...PDFJS_DEFAULT_CONFIG,
+  });
   const pdfDoc = await loadingTask.promise;
   const numPages = pdfDoc.numPages;
 
