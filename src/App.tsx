@@ -51,17 +51,7 @@ export const App: React.FC = () => {
           transition: 'background-color 0.25s ease, border-color 0.25s ease',
         }}
       >
-        <div
-          style={{
-            maxWidth: '1280px',
-            margin: '0 auto',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '1.25rem',
-          }}
-        >
+        <div className="footer-content">
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem' }}>
               <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--text-primary)' }}>

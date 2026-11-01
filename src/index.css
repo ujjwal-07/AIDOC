@@ -540,18 +540,198 @@ body {
 }
 
 /* --------------------------------------------------------------------------
-   Responsive Media Queries
+   Responsive Layout Utilities & Grid Systems
+   -------------------------------------------------------------------------- */
+.responsive-container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  width: 100%;
+}
+
+.navbar-top-row {
+  display: contents;
+}
+
+.navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.privacy-badge-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.73rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Editor Workspace 2-Column Responsive Grid */
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* Editor Sidebar Panel */
+.editor-sidebar {
+  max-height: 820px;
+  position: sticky;
+  top: 80px;
+}
+
+/* Document Merger Responsive Grid */
+.merger-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 2rem;
+  align-items: start;
+}
+
+.merger-grid-empty {
+  grid-template-columns: 1fr;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Breakpoints: Tablets & Laptops (<= 1024px)
+   -------------------------------------------------------------------------- */
+@media (max-width: 1024px) {
+  .editor-grid {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  .editor-sidebar {
+    position: static;
+    max-height: 520px;
+  }
+
+  .merger-grid {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Breakpoints: Tablets & Large Mobile (<= 900px)
    -------------------------------------------------------------------------- */
 @media (max-width: 900px) {
   .navbar {
-    padding: 0.75rem 1rem;
+    padding: 0.65rem 0.85rem;
     flex-direction: column;
     align-items: stretch;
-    gap: 0.75rem;
+    gap: 0.65rem;
   }
+
+  .navbar-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+
   .nav-tabs {
     overflow-x: auto;
     width: 100%;
     justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 2px;
+  }
+
+  .nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-tab-btn {
+    flex: 0 0 auto;
+    padding: 0.42rem 0.75rem;
+    font-size: 0.8rem;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Responsive Breakpoints: Mobile Devices (<= 640px)
+   -------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .responsive-container {
+    padding: 0.85rem 0.65rem;
+  }
+
+  .navbar {
+    padding: 0.5rem 0.65rem;
+  }
+
+  .logo-text {
+    font-size: 1.05rem;
+  }
+
+  .logo-tag {
+    display: none;
+  }
+
+  .logo-badge {
+    width: 32px;
+    height: 32px;
+  }
+
+  .privacy-pill-text {
+    display: none;
+  }
+
+  .privacy-badge-pill {
+    padding: 0.35rem 0.45rem;
+  }
+
+  .theme-toggle-text {
+    display: none;
+  }
+
+  .btn-theme-toggle {
+    padding: 0.35rem 0.5rem;
+  }
+
+  .dropzone {
+    padding: 2.25rem 1rem;
+  }
+
+  .workspace-canvas-wrapper {
+    padding: 0.75rem 0.35rem;
+    border-radius: var(--radius-md);
+  }
+
+  .btn {
+    padding: 0.42rem 0.8rem;
+    font-size: 0.8rem;
+  }
+
+  /* Footer on mobile */
+  footer {
+    padding: 1.25rem 0.75rem !important;
+  }
+
+  .footer-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+}
+
+.footer-content {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+}
+

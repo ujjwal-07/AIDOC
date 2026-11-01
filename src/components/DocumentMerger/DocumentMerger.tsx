@@ -133,7 +133,7 @@ export const DocumentMerger: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem 1.5rem' }}>
+    <div className="responsive-container">
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -155,7 +155,7 @@ export const DocumentMerger: React.FC = () => {
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: items.length > 0 ? '1fr 340px' : '1fr', gap: '2rem' }}>
+      <div className={`merger-grid ${items.length === 0 ? 'merger-grid-empty' : ''}`}>
         {/* Left Column: Dropzone & File List */}
         <div>
           {/* File Upload Dropzone */}

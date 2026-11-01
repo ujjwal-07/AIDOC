@@ -921,7 +921,7 @@ export const ImageTextEditor: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '1.5rem' }}>
+    <div className="responsive-container">
       {/* Floating Canvas Tooltip */}
       {canvasTooltip && (
         <div
@@ -1204,24 +1204,15 @@ export const ImageTextEditor: React.FC = () => {
           </div>
 
           {/* Main Workspace Grid: Canvas on Left, Detected Text Sidebar on Right */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1fr) 360px',
-              gap: '1.25rem',
-              alignItems: 'start',
-            }}
-          >
+          <div className="editor-grid">
             {/* Left: Interactive Canvas Container */}
             <div
               className="workspace-canvas-wrapper"
               style={{
-                padding: '1.5rem',
                 overflowX: 'auto',
                 display: 'flex',
                 justifyContent: 'center',
                 alignItems: 'flex-start',
-                minHeight: '600px',
               }}
             >
               <div
@@ -1262,14 +1253,11 @@ export const ImageTextEditor: React.FC = () => {
 
             {/* Right: Sidebar with Detected Text & Applied Edits */}
             <div
-              className="glass-panel"
+              className="glass-panel editor-sidebar"
               style={{
                 padding: '1rem',
                 display: 'flex',
                 flexDirection: 'column',
-                height: '750px',
-                position: 'sticky',
-                top: '90px',
               }}
             >
               {/* Sidebar Tabs */}
@@ -1671,6 +1659,8 @@ export const ImageTextEditor: React.FC = () => {
               boxShadow: '0 24px 60px rgba(0, 0, 0, 0.7)',
               border: '1px solid rgba(99, 102, 241, 0.3)',
               background: 'linear-gradient(180deg, rgba(22, 29, 47, 0.96) 0%, rgba(13, 18, 30, 0.98) 100%)',
+              maxHeight: '92vh',
+              overflowY: 'auto',
             }}
           >
             {/* Modal Header */}

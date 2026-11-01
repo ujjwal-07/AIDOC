@@ -15,15 +15,39 @@ export interface PdfToWordResult {
   docxBlob: Blob;
 }
 
+interface RawPdfItem {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  hasEOL?: boolean;
+}
+
+type HeadingLevelValue = (typeof HeadingLevel)[keyof typeof HeadingLevel];
+
+interface StructuredLine {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  fontSize: number;
+  isHeading: boolean;
+  headingLevel?: HeadingLevelValue;
+  isListItem: boolean;
+}
+
 /**
- * Extracts text and structural paragraphs from a PDF using pdfjs-dist,
- * then packages it into a properly formatted Microsoft Word (.docx) document.
+ * High-precision extraction of text, line flows, lists, and headings from PDF pages.
+ * Accurately clusters horizontal text runs, respects 2D spatial sorting, prevents line cutting,
+ * and compiles structured paragraphs into Microsoft Word (.docx).
  */
 export async function convertPdfToWord(
   pdfBuffer: ArrayBuffer,
   onProgress?: (progress: number, status: string) => void
 ): Promise<PdfToWordResult> {
-  onProgress?.(10, 'Loading PDF document...');
+  onProgress?.(10, 'Initializing PDF parser engine...');
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) });
   const pdfDoc = await loadingTask.promise;
   const numPages = pdfDoc.numPages;
@@ -34,110 +58,209 @@ export async function convertPdfToWord(
 
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
     const progressPercent = Math.round(15 + (pageNum / numPages) * 70);
-    onProgress?.(progressPercent, `Extracting text and layout from page ${pageNum} of ${numPages}...`);
+    onProgress?.(progressPercent, `Reconstructing layout for page ${pageNum} of ${numPages}...`);
 
     const page = await pdfDoc.getPage(pageNum);
     const textContent = await page.getTextContent();
-    const items = textContent.items as Array<{
-      str: string;
-      transform: number[];
-      width: number;
-      height: number;
-      hasEOL?: boolean;
-    }>;
+    const rawItems: RawPdfItem[] = [];
 
-    // Group text items into lines and detect headings based on Y coordinate and font size
-    const lines: Array<{ text: string; fontSize: number; y: number }> = [];
-    let currentLine = '';
-    let currentLineY = -1;
-    let maxFontSizeInLine = 12;
+    // 1. Ingest raw text items with precise coordinate mapping
+    for (const raw of textContent.items as any[]) {
+      if (!raw || typeof raw.str !== 'string') continue;
+      const str = raw.str;
+      if (!str && !raw.hasEOL) continue;
 
-    for (const item of items) {
-      if (!item.str) continue;
+      const transform = raw.transform || [12, 0, 0, 12, 0, 0];
+      const x = transform[4];
+      const y = transform[5]; // In PDF coordinates, higher Y = higher on the page
+      const fontSize = Math.round(Math.hypot(transform[0], transform[1])) || 12;
+      const width = typeof raw.width === 'number' ? raw.width : (str.length * fontSize * 0.55);
+      const height = typeof raw.height === 'number' && raw.height > 0 ? raw.height : fontSize;
 
-      const y = Math.round(item.transform[5]);
-      const fontSize = Math.round(Math.abs(item.transform[0]) || Math.abs(item.transform[3]) || 12);
-
-      if (currentLineY === -1 || Math.abs(y - currentLineY) < 6) {
-        currentLine += (currentLine ? ' ' : '') + item.str;
-        maxFontSizeInLine = Math.max(maxFontSizeInLine, fontSize);
-        currentLineY = y;
-      } else {
-        if (currentLine.trim()) {
-          lines.push({
-            text: currentLine.trim(),
-            fontSize: maxFontSizeInLine,
-            y: currentLineY,
-          });
-        }
-        currentLine = item.str;
-        currentLineY = y;
-        maxFontSizeInLine = fontSize;
-      }
-    }
-
-    if (currentLine.trim()) {
-      lines.push({
-        text: currentLine.trim(),
-        fontSize: maxFontSizeInLine,
-        y: currentLineY,
+      rawItems.push({
+        str,
+        x,
+        y,
+        width,
+        height,
+        fontSize,
+        hasEOL: raw.hasEOL,
       });
     }
 
-    const pageHeadings: string[] = [];
-    const pageParagraphs: string[] = [];
-    let currentParagraphBuffer: string[] = [];
+    if (rawItems.length === 0) {
+      extractedPages.push({
+        pageNumber: pageNum,
+        headings: [],
+        paragraphs: ['[Empty Page or Scanned Image Only]'],
+        fullText: '',
+      });
+      continue;
+    }
 
-    const flushParagraph = () => {
-      if (currentParagraphBuffer.length > 0) {
-        const paraText = currentParagraphBuffer.join(' ').replace(/\s+/g, ' ').trim();
-        if (paraText) {
-          pageParagraphs.push(paraText);
-          docxChildren.push(
-            new Paragraph({
-              children: [new TextRun({ text: paraText, size: 24 })], // 12pt
-              spacing: { after: 180 },
-            })
-          );
-        }
-        currentParagraphBuffer = [];
+    // 2. Compute median body font size on this page for dynamic heading thresholds
+    const fontSizes = rawItems.map((it) => it.fontSize).filter((fs) => fs > 0);
+    fontSizes.sort((a, b) => a - b);
+    const medianFontSize = fontSizes[Math.floor(fontSizes.length / 2)] || 11;
+
+    // 3. Cluster items into visual horizontal lines
+    // First, sort items roughly top-to-bottom (Y descending), then left-to-right (X ascending)
+    rawItems.sort((a, b) => {
+      const yDiff = b.y - a.y;
+      const tolerance = Math.min(a.fontSize, b.fontSize) * 0.45;
+      if (Math.abs(yDiff) <= tolerance) {
+        return a.x - b.x;
       }
-    };
+      return yDiff;
+    });
 
-    for (const line of lines) {
-      const text = line.text;
-      const words = text.split(/\s+/).filter(Boolean).length;
-      totalWords += words;
+    const lines: StructuredLine[] = [];
+    let currentLineCluster: RawPdfItem[] = [];
+    let currentLineBaselineY = -1;
 
-      // Classify as heading if font is significantly larger or short emphatic line
-      if (line.fontSize >= 18) {
-        flushParagraph();
-        pageHeadings.push(text);
-        docxChildren.push(
-          new Paragraph({
-            text: text,
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 240, after: 120 },
-          })
-        );
-      } else if (line.fontSize >= 14) {
-        flushParagraph();
-        pageHeadings.push(text);
-        docxChildren.push(
-          new Paragraph({
-            text: text,
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 180, after: 90 },
-          })
-        );
+    for (const item of rawItems) {
+      if (!item.str || item.str.trim() === '') {
+        // Keep spaces if they have substantial width
+        if (item.width > 2 && currentLineCluster.length > 0) {
+          currentLineCluster.push(item);
+        }
+        continue;
+      }
+
+      const clusterTolerance = Math.max(3.5, item.fontSize * 0.42);
+
+      if (currentLineBaselineY === -1 || Math.abs(item.y - currentLineBaselineY) <= clusterTolerance) {
+        currentLineCluster.push(item);
+        if (currentLineBaselineY === -1) {
+          currentLineBaselineY = item.y;
+        }
       } else {
-        currentParagraphBuffer.push(text);
+        if (currentLineCluster.length > 0) {
+          lines.push(buildStructuredLine(currentLineCluster, medianFontSize));
+        }
+        currentLineCluster = [item];
+        currentLineBaselineY = item.y;
       }
     }
 
-    flushParagraph();
+    if (currentLineCluster.length > 0) {
+      lines.push(buildStructuredLine(currentLineCluster, medianFontSize));
+    }
 
-    // Add page break if not last page
+    // Sort reconstructed lines strictly top-to-bottom
+    lines.sort((a, b) => b.y - a.y);
+
+    // 4. Calculate line gaps to detect true paragraph breaks
+    const lineGaps: number[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const gap = lines[i - 1].y - lines[i].y;
+      if (gap > 0 && gap < medianFontSize * 4) {
+        lineGaps.push(gap);
+      }
+    }
+    lineGaps.sort((a, b) => a - b);
+    const medianGap = lineGaps.length > 0 ? lineGaps[Math.floor(lineGaps.length / 2)] : (medianFontSize * 1.3);
+
+    // 5. Assemble lines into coherent paragraphs and Word blocks
+    const pageHeadings: string[] = [];
+    const pageParagraphs: string[] = [];
+    let currentParagraphLines: string[] = [];
+
+    const flushCurrentParagraph = () => {
+      if (currentParagraphLines.length === 0) return;
+
+      // Join lines smoothly: if line ends with hyphenation, join without space
+      let paragraphText = '';
+      for (let i = 0; i < currentParagraphLines.length; i++) {
+        const lineStr = currentParagraphLines[i].trim();
+        if (i === 0) {
+          paragraphText = lineStr;
+        } else {
+          if (paragraphText.endsWith('-') && /^[a-z]/.test(lineStr)) {
+            paragraphText = paragraphText.slice(0, -1) + lineStr;
+          } else {
+            paragraphText += ' ' + lineStr;
+          }
+        }
+      }
+
+      paragraphText = paragraphText.replace(/\s+/g, ' ').trim();
+      if (paragraphText) {
+        pageParagraphs.push(paragraphText);
+        docxChildren.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: paragraphText,
+                size: 23, // ~11.5pt
+                font: 'Calibri',
+              }),
+            ],
+            spacing: { after: 140, line: 276 }, // 1.15 line spacing, 7pt space after
+          })
+        );
+      }
+      currentParagraphLines = [];
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const prevLine = i > 0 ? lines[i - 1] : null;
+
+      // Count words
+      const lineWords = line.text.split(/\s+/).filter(Boolean).length;
+      totalWords += lineWords;
+
+      // Check vertical spacing indicating paragraph break
+      const gapFromPrev = prevLine ? prevLine.y - line.y : 0;
+      const isExtraVerticalGap = gapFromPrev > (medianGap * 1.55);
+
+      if (line.isHeading) {
+        flushCurrentParagraph();
+        pageHeadings.push(line.text);
+        docxChildren.push(
+          new Paragraph({
+            text: line.text,
+            heading: line.headingLevel || HeadingLevel.HEADING_1,
+            spacing: {
+              before: line.headingLevel === HeadingLevel.HEADING_1 ? 260 : 180,
+              after: 100,
+            },
+          })
+        );
+        continue;
+      }
+
+      if (line.isListItem) {
+        flushCurrentParagraph();
+        pageParagraphs.push(line.text);
+        docxChildren.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: line.text,
+                size: 23,
+                font: 'Calibri',
+              }),
+            ],
+            spacing: { after: 100, line: 260 },
+            indent: { left: 400 },
+          })
+        );
+        continue;
+      }
+
+      // If noticeable gap or previous line ended with end-of-sentence punctuation, flush
+      if (isExtraVerticalGap && currentParagraphLines.length > 0) {
+        flushCurrentParagraph();
+      }
+
+      currentParagraphLines.push(line.text);
+    }
+
+    flushCurrentParagraph();
+
+    // Page break between pages (except last)
     if (pageNum < numPages) {
       docxChildren.push(
         new Paragraph({
@@ -157,9 +280,29 @@ export async function convertPdfToWord(
   onProgress?.(90, 'Packaging structured Microsoft Word (.docx) document...');
 
   const doc = new Document({
+    styles: {
+      default: {
+        document: {
+          run: {
+            font: 'Calibri',
+            size: 23,
+            color: '1E293B',
+          },
+        },
+      },
+    },
     sections: [
       {
-        properties: {},
+        properties: {
+          page: {
+            margin: {
+              top: 1440, // 1 inch
+              bottom: 1440,
+              left: 1440,
+              right: 1440,
+            },
+          },
+        },
         children: docxChildren.length > 0 ? docxChildren : [new Paragraph({ text: 'No text extracted' })],
       },
     ],
@@ -172,6 +315,86 @@ export async function convertPdfToWord(
     pages: extractedPages,
     totalWords,
     docxBlob,
+  };
+}
+
+/**
+ * Reconstructs a single line of text from clustered items with micro-gap spacing analysis.
+ */
+function buildStructuredLine(items: RawPdfItem[], medianFontSize: number): StructuredLine {
+  // Sort items on the line strictly left-to-right
+  items.sort((a, b) => a.x - b.x);
+
+  let text = '';
+  let lineFontSize = 11;
+  const minX = items[0].x;
+  const baselineY = items[0].y;
+  let maxX = items[0].x + items[0].width;
+
+  for (let i = 0; i < items.length; i++) {
+    const cur = items[i];
+    lineFontSize = Math.max(lineFontSize, cur.fontSize);
+    maxX = Math.max(maxX, cur.x + cur.width);
+
+    if (i === 0) {
+      text += cur.str;
+    } else {
+      const prev = items[i - 1];
+      const prevEndX = prev.x + prev.width;
+      const gap = cur.x - prevEndX;
+      const prevChar = text.slice(-1);
+      const nextChar = cur.str[0];
+
+      // Insert space if there is a gap between fragments and neither side has whitespace
+      const shouldInsertSpace =
+        gap > (cur.fontSize * 0.16) &&
+        !/\s/.test(prevChar) &&
+        !/\s/.test(nextChar) &&
+        prevChar !== '-' &&
+        prevChar !== '/' &&
+        nextChar !== ',' &&
+        nextChar !== '.' &&
+        nextChar !== ':' &&
+        nextChar !== ';' &&
+        nextChar !== ')' &&
+        prevChar !== '(';
+
+      if (shouldInsertSpace) {
+        text += ' ' + cur.str;
+      } else {
+        text += cur.str;
+      }
+    }
+  }
+
+  const cleanText = text.replace(/\s+/g, ' ').trim();
+
+  // Heading classification
+  let isHeading = false;
+  let headingLevel: HeadingLevelValue | undefined;
+
+  if (lineFontSize >= medianFontSize * 1.45) {
+    isHeading = true;
+    headingLevel = HeadingLevel.HEADING_1;
+  } else if (lineFontSize >= medianFontSize * 1.25 && cleanText.length < 90 && !/[.?!]$/.test(cleanText)) {
+    isHeading = true;
+    headingLevel = HeadingLevel.HEADING_2;
+  }
+
+  // Bullet list detection
+  const isListItem =
+    !isHeading &&
+    /^([•\u2022\u25E6\u25AA\u25CF\u2013\u2014\-\*]|\d+[\.\)]|[a-zA-Z][\.\)])\s+/.test(cleanText);
+
+  return {
+    text: cleanText,
+    x: minX,
+    y: baselineY,
+    width: maxX - minX,
+    fontSize: lineFontSize,
+    isHeading,
+    headingLevel,
+    isListItem,
   };
 }
 

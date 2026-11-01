@@ -266,7 +266,12 @@ export const PdfEditor: React.FC = () => {
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [zoomScale, setZoomScale] = useState(1.4);
+  const [zoomScale, setZoomScale] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth <= 768) {
+      return Math.max(0.5, Number(((window.innerWidth - 32) / 600).toFixed(2)));
+    }
+    return 1.2;
+  });
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
 
   // Active Tool: 'editText' | 'addText' | 'whiteout' | 'highlight' | 'select'
@@ -967,7 +972,7 @@ export const PdfEditor: React.FC = () => {
     : null;
 
   return (
-    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '1.5rem' }}>
+    <div className="responsive-container">
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -1224,12 +1229,26 @@ export const PdfEditor: React.FC = () => {
                 </button>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                <button onClick={() => setZoomScale((z) => Math.max(0.8, z - 0.2))} className="btn-icon" title="Zoom Out">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <button onClick={() => setZoomScale((z) => Math.max(0.4, Number((z - 0.15).toFixed(2))))} className="btn-icon" title="Zoom Out">
                   <ZoomOut size={16} />
                 </button>
-                <button onClick={() => setZoomScale((z) => Math.min(2.5, z + 0.2))} className="btn-icon" title="Zoom In">
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, minWidth: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                  {Math.round(zoomScale * 100)}%
+                </span>
+                <button onClick={() => setZoomScale((z) => Math.min(2.5, Number((z + 0.15).toFixed(2))))} className="btn-icon" title="Zoom In">
                   <ZoomIn size={16} />
+                </button>
+                <button
+                  onClick={() => {
+                    const fitScale = Math.max(0.4, Number(((window.innerWidth - (window.innerWidth <= 768 ? 32 : 440)) / 600).toFixed(2)));
+                    setZoomScale(fitScale);
+                  }}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
+                  title="Fit PDF width to screen"
+                >
+                  Fit
                 </button>
               </div>
 
@@ -1280,12 +1299,11 @@ export const PdfEditor: React.FC = () => {
           </div>
 
           {/* Interactive Canvas & Side Text Panel */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '1.5rem', alignItems: 'start' }}>
+          <div className="editor-grid">
             {/* Left: Interactive Canvas with Exact PDF Layout */}
             <div
               className="workspace-canvas-wrapper"
               style={{
-                padding: '2rem',
                 overflowX: 'auto',
                 display: 'flex',
                 justifyContent: 'center',
@@ -1324,7 +1342,7 @@ export const PdfEditor: React.FC = () => {
             </div>
 
             {/* Right: Detected Text Side Panel */}
-            <div className="glass-panel" style={{ padding: '1.25rem', maxHeight: '820px', display: 'flex', flexDirection: 'column' }}>
+            <div className="glass-panel editor-sidebar" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column' }}>
               <div style={{ marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
                   <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -1414,10 +1432,12 @@ export const PdfEditor: React.FC = () => {
             style={{
               width: '100%',
               maxWidth: '560px',
-              padding: '1.75rem',
+              padding: '1.5rem',
               background: 'var(--bg-card)',
               border: '1px solid var(--border-medium)',
               boxShadow: 'var(--shadow-lg)',
+              maxHeight: '92vh',
+              overflowY: 'auto',
             }}
             onClick={(e) => e.stopPropagation()}
           >

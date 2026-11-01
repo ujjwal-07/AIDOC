@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   FileText, 
   ArrowRightLeft, 
@@ -9,7 +9,10 @@ import {
   Copy, 
   FileCheck, 
   FileType, 
-  Settings2 
+  Settings2,
+  ZoomIn,
+  ZoomOut,
+  Maximize2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { convertDocxToHtml, exportHtmlToPdf, createSampleDocx } from '../../utils/wordToPdf';
@@ -26,6 +29,36 @@ export const WordPdfConverter: React.FC = () => {
   const [pageSize, setPageSize] = useState<'a4' | 'letter'>('a4');
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const previewRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Responsive Zoom & Viewport state for Word preview
+  const [docZoom, setDocZoom] = useState<number | 'fit'>('fit');
+  const [containerWidth, setContainerWidth] = useState<number>(850);
+  const [previewHeight, setPreviewHeight] = useState<number>(1000);
+
+  useEffect(() => {
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.clientWidth);
+      }
+      if (previewRef.current) {
+        setPreviewHeight(previewRef.current.offsetHeight || 1000);
+      }
+    };
+    updateDimensions();
+    window.addEventListener('resize', updateDimensions);
+    const observer = new ResizeObserver(updateDimensions);
+    if (containerRef.current) observer.observe(containerRef.current);
+    if (previewRef.current) observer.observe(previewRef.current);
+    return () => {
+      window.removeEventListener('resize', updateDimensions);
+      observer.disconnect();
+    };
+  }, [wordHtml, orientation]);
+
+  const baseDocWidth = orientation === 'portrait' ? 794 : 1123;
+  const autoScale = Math.min(1.0, Math.max(0.28, (containerWidth - 32) / baseDocWidth));
+  const currentScale = typeof docZoom === 'number' ? docZoom : autoScale;
 
   // PDF -> Word state
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -55,6 +88,8 @@ export const WordPdfConverter: React.FC = () => {
   const handleExportWordToPdf = async () => {
     if (!previewRef.current) return;
     setIsConvertingDocx(true);
+    const originalTransform = previewRef.current.style.transform;
+    previewRef.current.style.transform = 'none';
     try {
       const pdfBlob = await exportHtmlToPdf(previewRef.current, {
         pageSize,
@@ -71,6 +106,9 @@ export const WordPdfConverter: React.FC = () => {
       console.error('Failed to export PDF:', err);
       alert('Failed to generate PDF. Please try again.');
     } finally {
+      if (previewRef.current) {
+        previewRef.current.style.transform = originalTransform;
+      }
       setIsConvertingDocx(false);
     }
   };
@@ -129,7 +167,7 @@ export const WordPdfConverter: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem 1.5rem' }}>
+    <div className="responsive-container">
       {/* Sub-mode selector */}
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '2rem' }}>
         <div
@@ -327,45 +365,130 @@ export const WordPdfConverter: React.FC = () => {
                 </div>
               </div>
 
-              {/* Rendered Document Preview Sheet */}
+              {/* Document Viewport & Zoom Toolbar */}
               <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  width: '100%',
+                  padding: '0.6rem 0.9rem',
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  marginBottom: '1rem',
+                  flexWrap: 'wrap',
+                  gap: '0.6rem',
+                  boxShadow: 'var(--shadow-sm)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => setDocZoom((prev) => typeof prev === 'number' ? Math.max(0.3, Number((prev - 0.15).toFixed(2))) : Math.max(0.3, Number((autoScale - 0.15).toFixed(2))))}
+                    className="btn-icon"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut size={15} />
+                  </button>
+
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, minWidth: '45px', textAlign: 'center', color: 'var(--text-primary)' }}>
+                    {Math.round(currentScale * 100)}%
+                  </span>
+
+                  <button
+                    onClick={() => setDocZoom((prev) => typeof prev === 'number' ? Math.min(2.0, Number((prev + 0.15).toFixed(2))) : Math.min(2.0, Number((autoScale + 0.15).toFixed(2))))}
+                    className="btn-icon"
+                    title="Zoom In"
+                  >
+                    <ZoomIn size={15} />
+                  </button>
+
+                  <button
+                    onClick={() => setDocZoom('fit')}
+                    className={`btn ${docZoom === 'fit' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                    title="Scale document to fit device screen"
+                  >
+                    <Maximize2 size={13} /> Fit Screen
+                  </button>
+
+                  <button
+                    onClick={() => setDocZoom(1.0)}
+                    className={`btn ${docZoom === 1.0 ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                    title="100% Full Print Size"
+                  >
+                    100%
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  <span>{orientation === 'portrait' ? 'A4 Portrait' : 'A4 Landscape'}</span>
+                  {currentScale < 0.98 && (
+                    <span className="badge badge-emerald">
+                      Auto-Fitted to Screen
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Rendered Document Preview Sheet with Adaptive Scaling */}
+              <div
+                ref={containerRef}
                 className="workspace-canvas-wrapper"
                 style={{
-                  padding: '2rem',
+                  padding: '1.5rem 0.5rem',
                   overflowX: 'auto',
                   display: 'flex',
                   justifyContent: 'center',
+                  alignItems: 'flex-start',
                 }}
               >
                 <div
-                  ref={previewRef}
                   style={{
-                    width: orientation === 'portrait' ? '794px' : '1123px',
-                    minHeight: '1000px',
-                    background: '#ffffff',
-                    color: '#0f172a',
-                    padding: '60px 70px',
-                    boxShadow: 'var(--shadow-lg)',
-                    borderRadius: '4px',
-                    fontFamily: 'system-ui, -apple-system, sans-serif',
-                    lineHeight: '1.6',
+                    width: `${Math.round(baseDocWidth * currentScale)}px`,
+                    height: `${Math.round(previewHeight * currentScale)}px`,
+                    position: 'relative',
+                    transition: 'width 0.2s ease, height 0.2s ease',
+                    flexShrink: 0,
                   }}
-                  dangerouslySetInnerHTML={{
-                    __html: `
-                    <style>
-                      .docx-content h1 { font-size: 26px; color: #0f172a; margin-top: 24px; margin-bottom: 12px; font-weight: 800; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
-                      .docx-content h2 { font-size: 20px; color: #1e293b; margin-top: 18px; margin-bottom: 10px; font-weight: 700; }
-                      .docx-content p { font-size: 14.5px; color: #334155; margin-bottom: 14px; }
-                      .docx-content table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
-                      .docx-content th, .docx-content td { border: 1px solid #cbd5e1; padding: 10px 14px; text-align: left; }
-                      .docx-content th { background-color: #f1f5f9; font-weight: 700; color: #0f172a; }
-                      .docx-content ul, .docx-content ol { padding-left: 24px; margin-bottom: 14px; color: #334155; }
-                      .docx-content li { margin-bottom: 6px; }
-                    </style>
-                    <div class="docx-content">${wordHtml}</div>
-                  `,
-                  }}
-                />
+                >
+                  <div
+                    ref={previewRef}
+                    style={{
+                      width: `${baseDocWidth}px`,
+                      transform: `scale(${currentScale})`,
+                      transformOrigin: 'top left',
+                      minHeight: '1000px',
+                      background: '#ffffff',
+                      color: '#0f172a',
+                      padding: '50px 60px',
+                      boxShadow: 'var(--shadow-lg)',
+                      borderRadius: '4px',
+                      fontFamily: 'system-ui, -apple-system, sans-serif',
+                      lineHeight: '1.6',
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: `
+                      <style>
+                        .docx-content h1 { font-size: 26px; color: #0f172a; margin-top: 24px; margin-bottom: 12px; font-weight: 800; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
+                        .docx-content h2 { font-size: 20px; color: #1e293b; margin-top: 18px; margin-bottom: 10px; font-weight: 700; }
+                        .docx-content p { font-size: 14.5px; color: #334155; margin-bottom: 14px; word-break: break-word; overflow-wrap: break-word; }
+                        .docx-content table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+                        .docx-content th, .docx-content td { border: 1px solid #cbd5e1; padding: 10px 14px; text-align: left; }
+                        .docx-content th { background-color: #f1f5f9; font-weight: 700; color: #0f172a; }
+                        .docx-content ul, .docx-content ol { padding-left: 24px; margin-bottom: 14px; color: #334155; }
+                        .docx-content li { margin-bottom: 6px; word-break: break-word; }
+                        .docx-content pre, .docx-content code { white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; font-family: 'JetBrains Mono', monospace; font-size: 13px; background: #f8fafc; padding: 2px 5px; border-radius: 4px; }
+                      </style>
+                      <div class="docx-content">${wordHtml}</div>
+                    `,
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
