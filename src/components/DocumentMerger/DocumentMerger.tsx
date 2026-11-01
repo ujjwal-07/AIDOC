@@ -5,7 +5,6 @@ import {
   ArrowUp, 
   ArrowDown, 
   Download, 
-  Sparkles, 
   CheckCircle2, 
   FileText, 
   Image as ImageIcon, 

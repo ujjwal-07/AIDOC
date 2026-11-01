@@ -9,7 +9,6 @@ import {
   ZoomOut, 
   ChevronLeft, 
   ChevronRight, 
-  Sparkles, 
   CheckCircle2, 
   Trash2, 
   Move, 

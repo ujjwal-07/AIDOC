@@ -4,7 +4,6 @@ import {
   Layers, 
   Edit3, 
   Scan, 
-  ShieldCheck, 
   FileCode2,
   Sun,
   Moon

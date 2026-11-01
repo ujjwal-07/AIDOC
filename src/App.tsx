@@ -5,7 +5,7 @@ import { WordPdfConverter } from './components/WordPdfConverter/WordPdfConverter
 import { DocumentMerger } from './components/DocumentMerger/DocumentMerger';
 import { PdfEditor } from './components/PdfEditor/PdfEditor';
 import { ImageTextEditor } from './components/ImageTextEditor/ImageTextEditor';
-import { Lock, Cpu, Globe2, ShieldCheck } from 'lucide-react';
+import { Cpu, Globe2, ShieldCheck } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('pdfEditor');

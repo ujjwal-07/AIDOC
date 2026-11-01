@@ -1,0 +1,5 @@
+# robots.txt for DocuCraft Studio
+User-agent: *
+Allow: /
+
+Sitemap: https://docucraft-studio.vercel.app/sitemap.xml
