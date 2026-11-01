@@ -2,4 +2,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://docucraft-studio.vercel.app/sitemap.xml
+Sitemap: https://docucraft-kohl-three.vercel.app/sitemap.xml
